@@ -10,7 +10,7 @@
  * @author Open Knowledge Technologies - http://www.oktech.ca/
  * @author Justin Filip <jfilip@oktech.ca> v 1.4
  * @author Patrick Pollet <patrick.pollet@insa-lyon.fr> v 1.5, v 1.6, v 1.7
- * @author
+ * @author Jose Raul Perez <joseraul.perezfrias@gmail.com> revision of get_assignment_submissions for moodle 2.0
  */
 /* rev history
  @see revisions.txt
@@ -1805,8 +1805,8 @@ EOSS;
 	}
 
 
-	/**
-	 * added rev 1.6.2
+        /**
+	 * NEW VERSION tested only for moodle 2.0 (online and one file assignment)
 	 */
 	function get_assignment_submissions ($client,$sesskey,$assignmentid,$userids=array(),$useridfield='idnumber',$timemodified=0,$zipfiles=1) {
 		global $CFG, $USER;
@@ -1840,9 +1840,10 @@ EOSS;
 			foreach ($userids as $userid) {
                 //$this->debug_output($userid.' '.$useridfield);
                 //caution :  alias u is not set in ws_get_record, so add it !!!
-				if ($user=ws_get_record('user u',$useridfield,$userid,'','','','',$fields)) {
+				//if ($user=ws_get_record('user u',$useridfield, $userid, '', '', '', '', $fields)) {
+				if ($user = ws_get_record('user', 'id', $userid)) {
 					$moodleUserIds[$user->id]=$user;
-                   // $this->debug_output(print_r($user,true));
+                    $this->debug_output(print_r($user,true));
                 }
 			}
 
@@ -1884,29 +1885,23 @@ EOSS;
                 $submission->assignmenttype=$assignment->assignmenttype;
                 $submission->files=array();
 				//collect file(s)
-                if ($basedir = $assignmentinstance->file_area_name($studentid)) {
-                    $basedir=$CFG->dataroot.'/'.$basedir;
-                   if ($files = get_directory_list($basedir,'',true,false,true)) {
-                   $numfiles=0;
-                  foreach ($files as $key => $value) {
-                         $file=new fileRecord();
-                         $file->setFilename($value);
-                         $file->setFilePath($basedir);
-                         $file->setFileurl(get_file_url("$basedir/$value", array('forcedownload'=>1)));
-                         if ($binary = file_get_contents("$basedir/$value")) {
-                             $file->setFilecontent(base64_encode( $binary ));
-                             $file->setFilesize(strlen($binary));
-                             $numfiles++;
-                        }else {
-                             $file->setFilecontent('');
-                             $file->setFilesize(0);
-                         }
-                         $submission->files[]=$file;
-                     }
-                     //for some reasons this field is 0 in table mdl_assignment_submissions
-                     $submission->numfiles=$numfiles;
-                   }
-                }
+				if ($assignment->assignmenttype != "online") {
+				
+					$fs = get_file_storage();
+					$browser = get_file_browser();					
+
+					if ($files = $fs->get_area_files($assignmentinstance->context->id, 'mod_assignment', 'submission', $submission->id, "timemodified", false)) {
+						$numfiles=0;
+						foreach ($files as $file) {
+							$filename = $file->get_filename();
+							$newFile = new fileRecord();
+							$newFile->setFilename($filename);
+							$newFile->setFileurl( file_encode_url($CFG->wwwroot.'/pluginfile.php', '/'.$assignmentinstance->context->id.'/mod_assignment/submission/'.$submission->id.'/'.$filename) );
+							$submission->files[]=$newFile;
+						}
+						$submission->numfiles=$numfiles;
+					}
+				}
 				$ret[]=$submission;
 			}
         }
