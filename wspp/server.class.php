@@ -10,7 +10,7 @@
  * @author Open Knowledge Technologies - http://www.oktech.ca/
  * @author Justin Filip <jfilip@oktech.ca> v 1.4
  * @author Patrick Pollet <patrick.pollet@insa-lyon.fr> v 1.5, v 1.6, v 1.7
- * @author Jose Raul Perez <joseraul.perezfrias@gmail.com> revision of get_assignment_submissions for moodle 2.0
+ * @author
  */
 /* rev history
  @see revisions.txt
@@ -646,7 +646,7 @@ $this->debug_output('internal ');
 				}
 			}
 		}
-        $this->debug_output("arrivé");
+        $this->debug_output("arrivÃ©");
 		//remove instances in course where current user is not enroled
 		return filter_instances($client, $ret,$type);
 	}
@@ -1696,7 +1696,7 @@ EOS;
 			and {$CFG->prefix}course_modules.module={$CFG->prefix}modules.id
 			and {$CFG->prefix}course_modules.id =$id_cmid
 EOS;
-			// toutes pour un prof, seulement les ressources visibles pour un �tudiant !!!
+			// toutes pour un prof, seulement les ressources visibles pour un ï¿½tudiant !!!
 			if (!$isTeacher) {
 				$sql .= " and {$CFG->prefix}course_modules.visible=1";
 			}
@@ -1805,8 +1805,8 @@ EOSS;
 	}
 
 
-        /**
-	 * NEW VERSION tested only for moodle 2.0 (online and one file assignment)
+	/**
+	 * NEW VERSION tested only in moodle 2.x (online and one file assignment)
 	 */
 	function get_assignment_submissions ($client,$sesskey,$assignmentid,$userids=array(),$useridfield='idnumber',$timemodified=0,$zipfiles=1) {
 		global $CFG, $USER;
@@ -1840,13 +1840,19 @@ EOSS;
 			foreach ($userids as $userid) {
                 //$this->debug_output($userid.' '.$useridfield);
                 //caution :  alias u is not set in ws_get_record, so add it !!!
-				//if ($user=ws_get_record('user u',$useridfield, $userid, '', '', '', '', $fields)) {
-				if ($user = ws_get_record('user', 'id', $userid)) {
-					$moodleUserIds[$user->id]=$user;
-                    $this->debug_output(print_r($user,true));
-                }
+				
+				if ($CFG->wspp_using_moodle20) {
+					if ($user = ws_get_record('user', 'id', $userid)) {
+						$moodleUserIds[$user->id]=$user;
+						$this->debug_output(print_r($user,true));
+					}				
+				} else {
+					if ($user=ws_get_record('user u',$useridfield, $userid, '', '', '', '', $fields)) {
+						$moodleUserIds[$user->id]=$user;
+						$this->debug_output(print_r($user,true));
+					}
+				}
 			}
-
 		}else {
 			/// Get all existing participants in this context.
 			if ($cm->groupingid==0 || !$cm->groupmembersonly)
@@ -1885,21 +1891,51 @@ EOSS;
                 $submission->assignmenttype=$assignment->assignmenttype;
                 $submission->files=array();
 				//collect file(s)
-				if ($assignment->assignmenttype != "online") {
 				
-					$fs = get_file_storage();
-					$browser = get_file_browser();					
+				// for moodle 2.x
+				if ($CFG->wspp_using_moodle20) {
+					// if is online submission, we don't need to see storage files
+					if ($assignment->assignmenttype != "online") {
+						$fs = get_file_storage();			
 
-					if ($files = $fs->get_area_files($assignmentinstance->context->id, 'mod_assignment', 'submission', $submission->id, "timemodified", false)) {
-						$numfiles=0;
-						foreach ($files as $file) {
-							$filename = $file->get_filename();
-							$newFile = new fileRecord();
-							$newFile->setFilename($filename);
-							$newFile->setFileurl( file_encode_url($CFG->wwwroot.'/pluginfile.php', '/'.$assignmentinstance->context->id.'/mod_assignment/submission/'.$submission->id.'/'.$filename) );
-							$submission->files[]=$newFile;
+						if ($files = $fs->get_area_files($assignmentinstance->context->id, 'mod_assignment', 'submission', $submission->id, "timemodified", false)) {
+							$numfiles=0;
+							foreach ($files as $file) {
+								$filename = $file->get_filename();
+								$newFile = new fileRecord();
+								$newFile->setFilename($filename);
+								$newFile->setFileurl( file_encode_url($CFG->wwwroot.'/pluginfile.php', '/'.$assignmentinstance->context->id.'/mod_assignment/submission/'.$submission->id.'/'.$filename) );
+								$submission->files[]=$newFile;
+								$numfiles++;
+							}
+							$submission->numfiles=$numfiles;
 						}
 						$submission->numfiles=$numfiles;
+					}
+				// for moodle older versions
+				} else {
+					if ($basedir = $assignmentinstance->file_area_name($studentid)) {
+						$basedir=$CFG->dataroot.'/'.$basedir;
+					   if ($files = get_directory_list($basedir,'',true,false,true)) {
+					   $numfiles=0;
+					  foreach ($files as $key => $value) {
+							 $file=new fileRecord();
+							 $file->setFilename($value);
+							 $file->setFilePath($basedir);
+							 $file->setFileurl(get_file_url("$basedir/$value", array('forcedownload'=>1)));
+							 if ($binary = file_get_contents("$basedir/$value")) {
+								 $file->setFilecontent(base64_encode( $binary ));
+								 $file->setFilesize(strlen($binary));
+								 $numfiles++;
+							}else {
+								 $file->setFilecontent('');
+								 $file->setFilesize(0);
+							 }
+							 $submission->files[]=$file;
+						 }
+						 //for some reasons this field is 0 in table mdl_assignment_submissions
+						 $submission->numfiles=$numfiles;
+					   }
 					}
 				}
 				$ret[]=$submission;
@@ -1910,6 +1946,96 @@ EOSS;
 
 	}
 
+	
+	/**
+     * update submission (online and one file), add if doesn't exist ¡¡ only for moodle 2.x !!
+     * @param int $client
+     * @param string $sesskey
+	 * @param string $userid
+     * @param string $assignmentid
+     * @param string[] $newData ($newData["text"], $newData["textformat"]) for online submissions
+     * @param string[] $files ($files[i]["name"], $files[i]["path"]); for files submissions
+     */
+	function update_submission ($client, $sesskey, $assignmentid, $userid, $newData, $files) {
+		global $CFG, $USER, $DB;
+		
+		if (!$this->validate_client($client, $sesskey, __FUNCTION__))
+			return $this->error(get_string('ws_invalidclient', 'local_wspp'));
+		
+		if (!$assignment = ws_get_record("assignment", "id", $assignmentid))
+			return $this->error(get_string('ws_assignmentunknown','local_wspp','id='.$assignmentid));
+		
+		if (!$course = ws_get_record("course", "id", $assignment->course))
+			return $this->error(get_string('ws_databaseinconsistent','local_wspp'));
+
+		if (!$cm = get_coursemodule_from_instance("assignment", $assignment->id, $course->id))
+			return $this->error(get_string('ws_databaseinconsistent','local_wspp'));
+
+		if( !$context = get_context_instance(CONTEXT_COURSE, $assignment->course))
+			return $this->error(get_string('ws_databaseinconsistent','local_wspp'));		
+
+        require_once($CFG->libdir.'/filelib.php');
+		require_once("$CFG->dirroot/mod/assignment/lib.php");
+		require_once("$CFG->dirroot/mod/assignment/type/$assignment->assignmenttype/assignment.class.php");
+		
+		$assignmentclass = "assignment_$assignment->assignmenttype";
+		$assignmentinstance = new $assignmentclass($cm->id, $assignment, $cm, $course);
+
+		// online submission		
+		if ($assignment->assignmenttype == "online") {
+			$data = new stdClass();
+			$data->text = $newData["text"];
+			$data->textformat = $newData["textformat"];
+			$assignmentinstance->update_submission($data);
+		}		
+		// files submission
+		else {
+			if (!ws_is_enrolled($course->id, $userid))
+				return $this->error(get_string('ws_user_notenroled','local_wspp'));
+
+			$submission = $assignmentinstance->get_submission($userid);
+			$filecount = 0;
+			if ($submission) {
+				$filecount = $assignmentinstance->count_user_files($submission->id);
+			}
+
+			if ($assignmentinstance->isopen() && (!$filecount || $assignmentinstance->assignment->resubmit || !$submission->timemarked)) {
+
+				$fs = get_file_storage();
+				$submission = $assignmentinstance->get_submission($userid, true); //create new submission if needed
+				$fs->delete_area_files($assignmentinstance->context->id, 'mod_assignment', 'submission', $submission->id);
+
+						
+				// TODO, I don't think this is very correct
+				$file_record = array('contextid'=>$assignmentinstance->context->id, 'component'=>'mod_assignment', 'filearea'=>'submission',
+					'itemid'=>$submission->id, 'filepath'=>'/', 'filename'=>$files[0]["name"], 'userid'=>$userid);
+						 
+				$file = $fs->create_file_from_pathname($file_record, $files[0]["path"]);
+				var_dump($file);
+				$updates = new stdClass(); //just enough data for updating the submission
+				$updates->timemodified = time();
+				$updates->numfiles     = 1;
+				$updates->id     = $submission->id;
+				$DB->update_record('assignment_submissions', $updates);
+						
+				// LOG INTO MOODLE'S LOG
+				add_to_log($assignmentinstance->course->id, 'assignment', 'upload', 'view.php?a='.$assignment->id, $assignment->id, $assignmentinstance->cm->id);
+						
+				$assignmentinstance->update_grade($submission);
+				$assignmentinstance->email_teachers($submission);
+
+				// Let Moodle know that an assessable file was uploaded (eg for plagiarism detection)
+				$eventdata = new stdClass();
+				$eventdata->modulename   = 'assignment';
+				$eventdata->cmid         = $assignmentinstance->cm->id;
+				$eventdata->itemid       = $submission->id;
+				$eventdata->courseid     = $assignmentinstance->course->id;
+				$eventdata->userid       = $userid;
+				$eventdata->file         = $file;
+				events_trigger('assessable_file_uploaded', $eventdata);
+			}
+		}
+	}
 
 
 	/**
@@ -4515,13 +4641,6 @@ EOSS;
         }
         return $ret;
     }
-
-
-
-
-
-
-
 
 }
 ?>
