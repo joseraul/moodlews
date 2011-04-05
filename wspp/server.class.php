@@ -260,7 +260,7 @@ class server {
 	 *               client.
 	 */
 	function login($username, $password) {
-		global $CFG;
+		global $CFG,$USER;
 
 		if (!empty ($CFG->ws_disable))
 			return $this->error(get_string('ws_accessdisabled', 'local_wspp'));
@@ -347,6 +347,9 @@ $this->debug_output('internal ');
 					add_to_log(SITEID, 'webservice', 'webservice pp', '', __FUNCTION__);
 			} else
 				return $this->error(get_string('ws_errorregistersession','local_wspp'));
+            // rev 1.8.2  important when connecting via smartphones ...
+            $USER=$user;
+            update_user_login_times();
 
 		}
 		/// Return standard data to be converted into the appropriate data format
@@ -355,6 +358,8 @@ $this->debug_output('internal ');
 			'client' => $sess->id,
 			'sessionkey' => $sess->sessionkey
 		);
+
+
 		$this->debug_output(print_r($ret, true));
 		return $ret;
 	}
@@ -646,7 +651,7 @@ $this->debug_output('internal ');
 				}
 			}
 		}
-        $this->debug_output("arrivÃ©");
+        $this->debug_output("arrivé");
 		//remove instances in course where current user is not enroled
 		return filter_instances($client, $ret,$type);
 	}
@@ -1696,7 +1701,7 @@ EOS;
 			and {$CFG->prefix}course_modules.module={$CFG->prefix}modules.id
 			and {$CFG->prefix}course_modules.id =$id_cmid
 EOS;
-			// toutes pour un prof, seulement les ressources visibles pour un ï¿½tudiant !!!
+			// toutes pour un prof, seulement les ressources visibles pour un �tudiant !!!
 			if (!$isTeacher) {
 				$sql .= " and {$CFG->prefix}course_modules.visible=1";
 			}
@@ -1946,24 +1951,21 @@ EOSS;
 
 	}
 
-	
 	/**
      * update submission (online and one file), add if doesn't exist ¡¡ only for moodle 2.x !!
      * @param int $client
      * @param string $sesskey
-	 * @param string $userid
-     * @param string $assignmentid
-     * @param string[] $newData ($newData["text"], $newData["textformat"]) for online submissions
-     * @param string[] $files ($files[i]["name"], $files[i]["path"]); for files submissions
+     * @param array $newSubmission
+	 * @return boolean True TODO return the submission object
      */
-	function update_submission ($client, $sesskey, $assignmentid, $userid, $newData, $files) {
+	function update_submission ($client, $sesskey, $newSubmission) {
 		global $CFG, $USER, $DB;
 		
 		if (!$this->validate_client($client, $sesskey, __FUNCTION__))
 			return $this->error(get_string('ws_invalidclient', 'local_wspp'));
 		
-		if (!$assignment = ws_get_record("assignment", "id", $assignmentid))
-			return $this->error(get_string('ws_assignmentunknown','local_wspp','id='.$assignmentid));
+		if (!$assignment = ws_get_record("assignment", "id", $newSubmission->assignment))
+			return $this->error(get_string('ws_assignmentunknown','local_wspp','id='.$newSubmission->assignment));
 		
 		if (!$course = ws_get_record("course", "id", $assignment->course))
 			return $this->error(get_string('ws_databaseinconsistent','local_wspp'));
@@ -1981,19 +1983,20 @@ EOSS;
 		$assignmentclass = "assignment_$assignment->assignmenttype";
 		$assignmentinstance = new $assignmentclass($cm->id, $assignment, $cm, $course);
 
+		if (!ws_is_enrolled($course->id, $newSubmission->userid))
+			return $this->error(get_string('ws_user_notenroled','local_wspp'));		
+		
 		// online submission		
 		if ($assignment->assignmenttype == "online") {
 			$data = new stdClass();
-			$data->text = $newData["text"];
-			$data->textformat = $newData["textformat"];
+			$data->text = $newSubmission->data1;
+			$data->textformat = $newSubmission->format;
 			$assignmentinstance->update_submission($data);
 		}		
 		// files submission
 		else {
-			if (!ws_is_enrolled($course->id, $userid))
-				return $this->error(get_string('ws_user_notenroled','local_wspp'));
-
-			$submission = $assignmentinstance->get_submission($userid);
+			
+			$submission = $assignmentinstance->get_submission($newSubmission->userid);
 			$filecount = 0;
 			if ($submission) {
 				$filecount = $assignmentinstance->count_user_files($submission->id);
@@ -2007,8 +2010,9 @@ EOSS;
 
 						
 				// TODO, I don't think this is very correct
+				// TODO $files ERROR!!
 				$file_record = array('contextid'=>$assignmentinstance->context->id, 'component'=>'mod_assignment', 'filearea'=>'submission',
-					'itemid'=>$submission->id, 'filepath'=>'/', 'filename'=>$files[0]["name"], 'userid'=>$userid);
+					'itemid'=>$submission->id, 'filepath'=>'/', 'filename'=>$files[0]["name"], 'userid'=>$newSubmission->userid);
 						 
 				$file = $fs->create_file_from_pathname($file_record, $files[0]["path"]);
 				var_dump($file);
@@ -2035,8 +2039,10 @@ EOSS;
 				events_trigger('assessable_file_uploaded', $eventdata);
 			}
 		}
+		
+		// if I'm here, I guess all worked fine
+		return true;
 	}
-
 
 	/**
 	 * Enrol users with the given role name  in the given course
@@ -4641,6 +4647,76 @@ EOSS;
         }
         return $ret;
     }
+
+
+     /**  rev 1.8.2
+     * retrieve all contacts of user identified by userid
+     * @param int $client
+     * @param string $sesskey
+     * @param string $userid
+     * @param string $useridfield
+     * @return contactRecord[]
+     */
+
+    public function get_message_contacts ($client,$sesskey,$userid,$useridfield) {
+
+
+        global $CFG,$USER;
+        if (empty($CFG->messaging))
+            return $this->error(get_string('ws_messaingdisabled', 'local_wspp'));
+
+        if (!$this->validate_client($client, $sesskey,__FUNCTION__)) {
+            return $this->error(get_string('ws_invalidclient', 'local_wspp'));
+        }
+        if (empty($userid)) {  //it is me that send it
+            $userid=$USER->id;
+            $useridfield='id';
+        }
+
+        if (!$user = ws_get_record("user",$useridfield, $userid)) {
+            return $this->error(get_string('ws_userunknown','local_wspp',$useridfield.'='.$userid));
+        }
+
+        if ($user->id !=$USER->id && !$this->has_capability('moodle/site:readallmessages', CONTEXT_SYSTEM, 0)) {
+                return $this->error(get_string('ws_operationnotallowed','local_wspp'));
+        }
+
+
+    // get all in our contactlist who are not blocked in our contact list
+    // and count messages we have waiting from each of them
+    //$contactsql = "SELECT u.id, u.firstname, u.lastname, u.picture,
+     //                     u.imagealt, u.lastaccess, count(m.id) as messagecount
+     $contactsql = "SELECT u.*, count(m.id) as messagecount
+                   FROM {$CFG->prefix}message_contacts mc
+                   JOIN {$CFG->prefix}user u
+                      ON u.id = mc.contactid
+                   LEFT OUTER JOIN {$CFG->prefix}message m
+                      ON m.useridfrom = mc.contactid
+                      AND m.useridto = {$user->id}
+                   WHERE mc.userid = {$user->id}
+                         AND mc.blocked = 0
+                   GROUP BY u.id, u.firstname, u.lastname, u.picture,
+                            u.imagealt, u.lastaccess
+                   ORDER BY u.firstname ASC";
+         $this->debug_output($contactsql);
+        $ret=ws_get_records_sql($contactsql);
+
+
+
+
+
+        $this->debug_output(print_r($ret,true));
+         // step 1 generate the return array and pass it acros filtering process
+        //$ret= array();
+        return filter_contacts($client,$ret);
+    }
+
+
+
+
+
+
+
 
 }
 ?>
