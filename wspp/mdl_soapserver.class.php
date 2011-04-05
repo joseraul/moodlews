@@ -267,6 +267,48 @@ class mdl_soapserver extends server {
         return parent :: logout($client, $sesskey);
     }
 
+
+        /**
+    * determine the primary role of user in a course
+    * @param int $client The client session record ID.
+    * @param string $sesskey The session key returned by a previous login.
+    * @param string userid
+    * @param string useridfield
+    * @param string courseid
+    * @param string courseidfield
+    * @return int
+    *          1 admin
+    *          2 coursecreator
+    *          3 editing teacher
+    *          4 non editing teacher
+    *          5 student
+    *          6 guest IF course allows guest AND username ==guest
+    *          0 nothing
+    * since this operation retunr s a simple type, no need to override it in protocol specific layer
+    * starting at rev 1.8 it must also be here for parsing by genwslp.php
+    */
+    public function get_primaryrole_incourse($client, $sesskey, $userid, $useridfield, $courseid, $courseidfield) {
+        return parent::get_primaryrole_incourse($client, $sesskey, $userid, $useridfield, $courseid, $courseidfield);
+        }
+
+
+    /**
+    * determine if user has (at least) a given role in a course
+    * @param int $client The client session record ID.
+    * @param string $sesskey The session key returned by a previous login.
+    * @param string userid
+    * @param string useridfield
+    * @param string courseid
+    * @param string courseidfield
+    * @param int roleid
+    * @return boolean True if Ok , False otherwise.
+    * since this operation retunr s a simple type, no need to override it in protocol specific layer
+    * starting at rev 1.8 it must also be here for parsing by genwslp.php
+    */
+    public function has_role_incourse($client, $sesskey, $userid, $useridfield, $courseid, $courseidfield, $roleid) {
+        return parent::has_role_incourse($client, $sesskey, $userid, $useridfield, $courseid, $courseidfield, $roleid);
+    }
+
     /**  =====  OVERRIDE SERVER METHODS NEEDING SOAP-SPECIFIC HANDLING  ======  **/
 
     /**
@@ -1132,6 +1174,17 @@ class mdl_soapserver extends server {
 
         return $res;
 
+    }
+	
+	/**
+     * update submission (online and one file), add if doesn't exist ¡¡ only for moodle 2.x !! 
+     * @param int $client
+     * @param string $sesskey
+     * @param array $newSubmission
+	 * @return boolean True TODO return the submission object
+     */
+    public function update_submission ($client, $sesskey, $newSubmission) {
+        return parent :: update_submission ($client, $sesskey, $newSubmission);
     }
 
     /**
@@ -2320,6 +2373,20 @@ class mdl_soapserver extends server {
     }
 
          /**  rev 1.8
+     * retrieve all contacts of user identified by userid
+     * @param int $client
+     * @param string $sesskey
+     * @param string $userid
+     * @param string $useridfield
+     * @return contactRecord[]
+     */
+
+    public function get_message_contacts ($client,$sesskey,$userid,$useridfield) {
+              return $this->send($this->to_soap_array(parent :: get_message_contacts ($client,$sesskey,$userid,$useridfield
+            ), 'contacts', 'contactRecord', get_string('nocontacts', 'local_wspp')));
+    }
+
+           /**  rev 1.8
      * retrieve all unread user's messages
      * @param int $client
      * @param string $sesskey
