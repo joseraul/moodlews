@@ -1841,6 +1841,10 @@ EOSS;
 		$roleid=5; //students
 
 		$moodleUserIds=array();
+		
+		// add user
+		$userids[] = $USER->id;
+		
 		if (!empty($userids)) {
 			foreach ($userids as $userid) {
                 //$this->debug_output($userid.' '.$useridfield);
@@ -1959,6 +1963,7 @@ EOSS;
 	 * @return boolean True TODO return the submission object
      */
 	function update_submission ($client, $sesskey, $newSubmission) {
+
 		global $CFG, $USER, $DB;
 		
 		if (!$this->validate_client($client, $sesskey, __FUNCTION__))
@@ -1983,7 +1988,7 @@ EOSS;
 		$assignmentclass = "assignment_$assignment->assignmenttype";
 		$assignmentinstance = new $assignmentclass($cm->id, $assignment, $cm, $course);
 
-		if (!ws_is_enrolled($course->id, $newSubmission->userid))
+		if (!ws_is_enrolled($course->id, $USER->id))
 			return $this->error(get_string('ws_user_notenroled','local_wspp'));		
 		
 		// online submission		
@@ -1996,7 +2001,7 @@ EOSS;
 		// files submission
 		else {
 			
-			$submission = $assignmentinstance->get_submission($newSubmission->userid);
+			$submission = $assignmentinstance->get_submission($USER->id);
 			$filecount = 0;
 			if ($submission) {
 				$filecount = $assignmentinstance->count_user_files($submission->id);
@@ -2005,17 +2010,22 @@ EOSS;
 			if ($assignmentinstance->isopen() && (!$filecount || $assignmentinstance->assignment->resubmit || !$submission->timemarked)) {
 
 				$fs = get_file_storage();
-				$submission = $assignmentinstance->get_submission($userid, true); //create new submission if needed
+				$submission = $assignmentinstance->get_submission($USER->id, true); //create new submission if needed
 				$fs->delete_area_files($assignmentinstance->context->id, 'mod_assignment', 'submission', $submission->id);
 
-						
-				// TODO, I don't think this is very correct
-				// TODO $files ERROR!!
+				// create de new file
 				$file_record = array('contextid'=>$assignmentinstance->context->id, 'component'=>'mod_assignment', 'filearea'=>'submission',
-					'itemid'=>$submission->id, 'filepath'=>'/', 'filename'=>$files[0]["name"], 'userid'=>$newSubmission->userid);
-						 
-				$file = $fs->create_file_from_pathname($file_record, $files[0]["path"]);
-				var_dump($file);
+					'itemid'=>$submission->id, 'filepath'=>'/', 'filename'=>$newSubmission->files[0]->filename, 'userid'=>$USER->id);
+				
+				// how we send file
+				// send file by content
+				if (!empty($newSubmission->files[0]->filecontent)) {
+					$file = $fs->create_file_from_string($file_record, base64_decode($newSubmission->files[0]->filecontent));
+				} else {
+				// send file by url
+					$file = $fs->create_file_from_pathname($file_record, $newSubmission->files[0]->fileurl);
+				}
+				
 				$updates = new stdClass(); //just enough data for updating the submission
 				$updates->timemodified = time();
 				$updates->numfiles     = 1;
@@ -2034,7 +2044,7 @@ EOSS;
 				$eventdata->cmid         = $assignmentinstance->cm->id;
 				$eventdata->itemid       = $submission->id;
 				$eventdata->courseid     = $assignmentinstance->course->id;
-				$eventdata->userid       = $userid;
+				$eventdata->userid       = $USER->id;
 				$eventdata->file         = $file;
 				events_trigger('assessable_file_uploaded', $eventdata);
 			}
